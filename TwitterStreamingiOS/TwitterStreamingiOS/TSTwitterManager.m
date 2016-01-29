@@ -10,7 +10,11 @@
 #import "TSTweet.h"
 #import "TSTwitterParser.h"
 
+#import "SBJson4.h"
+
 @implementation TSTwitterManager
+
+SBJson4Parser * parser;
 
 // Initialization of the streaming connection, flags and objects used by the manager
 -(void)initManager {
@@ -24,11 +28,78 @@
     
     // Initialize the fetchedResultsController
     NSError *error;
-	if (![[self fetchedResultsController] performFetch:&error]) {
-		// Update to handle the error appropriately.
-		NSLog(@"Unresolved error %@, %@", error, [error userInfo]);
-	}
+    if (![[self fetchedResultsController] performFetch:&error]) {
+        // Update to handle the error appropriately.
+        NSLog(@"Unresolved error %@, %@", error, [error userInfo]);
+    }
     NSLog(@"Tweets count: %lu",(unsigned long)[_fetchedResultsController.fetchedObjects count]);
+    
+    
+    SBJson4ValueBlock block = ^(id item, BOOL *stop) {
+        // The stream is running
+        _isConnected =  YES;
+        
+        // Make the delegate aware of being reconnected
+        if (_isTryingToConnect) {
+            _isTryingToConnect = NO;
+            [self.delegate reconnectedToStream];
+        }
+        
+        // Invoke the parser and get the tweet
+        NSDictionary *tweet = nil;
+        
+        tweet = item;//[parser getTweetsFromData:data];
+        
+        // Save the tweet in Core Data if it contains a coordinate
+        NSObject *coordinates = [tweet objectForKey:@"coordinates"];
+        if (coordinates != [NSNull null] &&
+            [[(NSDictionary *)coordinates objectForKey:@"type"] isEqualToString:@"Point"] &&
+            [(NSDictionary *)coordinates objectForKey:@"coordinates"] != [NSNull null]) {
+            
+            NSError *error;
+            NSManagedObjectContext *context = [self managedObjectContext];
+            TSTweet *tweetManagedObject = [NSEntityDescription
+                                           insertNewObjectForEntityForName:@"TSTweet"
+                                           inManagedObjectContext:context];
+            tweetManagedObject.id_str = [tweet objectForKey:@"id_str"];
+            tweetManagedObject.text = [tweet objectForKey:@"text"];
+            tweetManagedObject.lon = [[(NSDictionary *)coordinates objectForKey:@"coordinates"] objectAtIndex:0];
+            tweetManagedObject.lat = [[(NSDictionary *)coordinates objectForKey:@"coordinates"] objectAtIndex:1];
+            if (![context save:&error]) {
+                NSLog(@"Error saving to Core Data: %@", [error localizedDescription]);
+            } else {
+                
+                // Create a timer to delete the tweet in the future
+                // It is created in a different thread to avoid the UI disabling the timer
+                NSTimer *timer = [NSTimer timerWithTimeInterval:TS_TWEET_TTL
+                                                         target:self
+                                                       selector:@selector(tweetTimerDidFire:)
+                                                       userInfo:@{@"id_str" : [tweet objectForKey:@"id_str"]} repeats:NO];
+                [[NSRunLoop mainRunLoop] addTimer:timer forMode:NSRunLoopCommonModes];
+            }
+        }
+        else
+        {
+            //            NSLog(@"text w/o location is %@.", [tweet objectForKey:@"text"]);
+            printf(".");
+        }
+        
+    };
+
+    
+    parser = [SBJson4Parser parserWithBlock:block
+                             allowMultiRoot:YES
+                            unwrapRootArray:YES
+                               errorHandler:^(NSError *error) {
+                                   NSLog(@"errorHandler: keyword = %@", keyword);
+                                   NSLog(@"errorHandler: error = %@", error);
+                                   ///TODO: restart if error
+                                   
+                                   [aConn cancel];
+                                   parser = nil;
+                                   NSLog(@"try connect again.");
+                                   [self restartConnection];
+                               }];
 }
 
 
@@ -67,8 +138,9 @@
 
 #pragma mark - Connection setup
 
-
 - (void)initStreamingConnectionForPattern:(NSString *)aKeyword {
+    
+    keyword = aKeyword;
     
     //  Check that the user has local Twitter accounts
     if ([self userHasAccessToTwitter]) {
@@ -111,7 +183,7 @@
                                                     
                                                     // Once we have the authenticated request prepared, we launch the session
                                                     dispatch_async(dispatch_get_main_queue(), ^{
-                                                        NSURLConnection *aConn = [NSURLConnection connectionWithRequest:[request preparedURLRequest] delegate:self];
+                                                        aConn = [NSURLConnection connectionWithRequest:[request preparedURLRequest] delegate:self];
                                                         [aConn start];
                                                     });
                                                 }
@@ -139,53 +211,37 @@
 
 - (void)connection:(NSURLConnection *)connection didReceiveData:(NSData *)data {
     
-    // If we receive the data
-    if (data) {
-        
-        // The stream is running
-        _isConnected =  YES;
-        
-        // Make the delegate aware of being reconnected
-        if (_isTryingToConnect) {
-            _isTryingToConnect = NO;
-            [self.delegate reconnectedToStream];
-        }
-        
-        // Invoke the parser and get the tweet
-        NSDictionary *tweet = nil;
-        TSTwitterParser *parser = [[TSTwitterParser alloc] init];
-        parser.delegate = self;
-        tweet = [parser getTweetsFromData:data];
-        
-        // Save the tweet in Core Data if it contains a coordinate
-        NSObject *coordinates = [tweet objectForKey:@"coordinates"];
-        if (coordinates != [NSNull null] &&
-            [[(NSDictionary *)coordinates objectForKey:@"type"] isEqualToString:@"Point"] &&
-            [(NSDictionary *)coordinates objectForKey:@"coordinates"] != [NSNull null]) {
-            
-            NSError *error;
-            NSManagedObjectContext *context = [self managedObjectContext];
-            TSTweet *tweetManagedObject = [NSEntityDescription
-                                           insertNewObjectForEntityForName:@"TSTweet"
-                                           inManagedObjectContext:context];
-            tweetManagedObject.id_str = [tweet objectForKey:@"id_str"];
-            tweetManagedObject.text = [tweet objectForKey:@"text"];
-            tweetManagedObject.lon = [[(NSDictionary *)coordinates objectForKey:@"coordinates"] objectAtIndex:0];
-            tweetManagedObject.lat = [[(NSDictionary *)coordinates objectForKey:@"coordinates"] objectAtIndex:1];
-            if (![context save:&error]) {
-                NSLog(@"Error saving to Core Data: %@", [error localizedDescription]);
-            } else {
-                
-                // Create a timer to delete the tweet in the future
-                // It is created in a different thread to avoid the UI disabling the timer
-                NSTimer *timer = [NSTimer timerWithTimeInterval:TS_TWEET_TTL
-                                                         target:self
-                                                       selector:@selector(tweetTimerDidFire:)
-                                                       userInfo:@{@"id_str" : [tweet objectForKey:@"id_str"]} repeats:NO];
-                [[NSRunLoop mainRunLoop] addTimer:timer forMode:NSRunLoopCommonModes];
+    
+    dispatch_queue_t queue = dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0ul);
+    dispatch_async(queue, ^{
+        @synchronized(self) {
+            switch  ([parser parse:data])
+            {
+                case SBJson4ParserComplete:
+                    parser = nil;
+                    break;
+                case SBJson4ParserError:
+                    parser = nil;
+                    break;
+                case SBJson4ParserWaitingForData:
+                    break;
+                default:
+                    break;
             }
         }
-    }
+    });
+}
+
+- (void)restartConnection {
+    // The stream has failed
+    _isConnected = NO;
+    _isTryingToConnect = YES;
+    
+    // The stream is closed, so we need to create a new stream from the ground up
+    // We wait 5 second to avoid overloading the server
+    dispatch_async(dispatch_get_main_queue(), ^{
+    [self performSelector:@selector(initStreamingConnectionForPattern:) withObject:TS_SEARCH_PATTERN afterDelay:5];
+    });
 }
 
 // If the connection fails, try to reconnect in 10 seconds
@@ -196,13 +252,7 @@
     // If the connection fails, tell the delegate
     [self.delegate fetchingTweetsFailedWithError:@"Connection failed. Trying to reconnect."];
     
-    // The stream has failed
-    _isConnected = NO;
-    _isTryingToConnect = YES;
-    
-    // The stream is closed, so we need to create a new stream from the ground up
-    // We wait 5 second to avoid overloading the server
-    [self performSelector:@selector(initStreamingConnectionForPattern:) withObject:TS_SEARCH_PATTERN afterDelay:5];
+    [self restartConnection];
 }
 
 

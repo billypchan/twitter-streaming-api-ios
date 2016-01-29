@@ -10,7 +10,7 @@
 #import <MapKit/MapKit.h>
 #import "TSTwitterManagerDelegate.h"
 
-@interface TSTwitterMap : UIViewController <TSTwitterManagerDelegate>
+@interface TSTwitterMap : UIViewController <TSTwitterManagerDelegate, MKMapViewDelegate>
 
 @property (strong, nonatomic) IBOutlet MKMapView *theMap;
 @property (nonatomic, strong) UIAlertView *theAlert;

@@ -20,6 +20,11 @@
 #import "TSTwitterParserDelegate.h"
 
 @interface TSTwitterManager : NSObject <NSFetchedResultsControllerDelegate, TSTwitterParserDelegate>
+{
+    ///buffer for retry
+    NSString * keyword;
+    NSURLConnection *aConn;
+}
 
 @property (nonatomic,strong) NSManagedObjectContext* managedObjectContext;
 @property (nonatomic, retain) NSFetchedResultsController *fetchedResultsController;

@@ -49,13 +49,14 @@
 #pragma mark - TSTwitterManagerDelegate
 
 -(void)insertedNewTweet:(TSTweet *)tweet {
-    
-    // When a new tweet arrives, we need to add the annotation for it in the map.
-    TSMapAnnotation *tweetAnnotation = [[TSMapAnnotation alloc] init];
-    tweetAnnotation.id_str = tweet.id_str;
-    tweetAnnotation.text = tweet.text;
-    tweetAnnotation.coordinate = CLLocationCoordinate2DMake([tweet.lat doubleValue], [tweet.lon doubleValue]);
-    [self.theMap addAnnotation:tweetAnnotation];
+    dispatch_async(dispatch_get_main_queue(), ^{
+        // When a new tweet arrives, we need to add the annotation for it in the map.
+        TSMapAnnotation *tweetAnnotation = [[TSMapAnnotation alloc] init];
+        tweetAnnotation.id_str = tweet.id_str;
+        tweetAnnotation.text = tweet.text;
+        tweetAnnotation.coordinate = CLLocationCoordinate2DMake([tweet.lat doubleValue], [tweet.lon doubleValue]);
+        [self.theMap addAnnotation:tweetAnnotation];
+    });
 }
 
 -(void)deletedTweet:(TSTweet *)tweet {
@@ -71,10 +72,11 @@
 -(void)fetchingTweetsFailedWithError:(NSString *)error {
     
     // When an error with the connection, parsing or anything else occurs, alert the user.
-    if (!_theAlert) {
-        self.theAlert = [[UIAlertView alloc] initWithTitle:@"" message:error delegate:Nil cancelButtonTitle:@"OK" otherButtonTitles:nil, nil];
-        [_theAlert show];
-    }
+//    if (!_theAlert) {
+//        self.theAlert = [[UIAlertView alloc] initWithTitle:@"" message:error delegate:Nil cancelButtonTitle:@"OK" otherButtonTitles:nil, nil];
+//        [_theAlert show];
+//    }
+    ////TODO: HUD
 }
 
 -(void)reconnectedToStream {
@@ -86,6 +88,15 @@
     self.theAlert = [[UIAlertView alloc] initWithTitle:@"" message:@"Reconnected" delegate:Nil cancelButtonTitle:@"OK" otherButtonTitles:nil, nil];
     [_theAlert show];
     self.theAlert = nil;
+}
+
+- (MKAnnotationView *) mapView:(MKMapView *)mapView viewForAnnotation:(id ) annotation{
+    MKPinAnnotationView *newAnnotation = [[MKPinAnnotationView alloc] initWithAnnotation:annotation reuseIdentifier:@"annotation1"];
+    newAnnotation.pinTintColor = [UIColor purpleColor];
+    newAnnotation.animatesDrop = YES;
+    newAnnotation.canShowCallout = NO;
+    [newAnnotation setSelected:YES animated:YES];
+    return newAnnotation;
 }
 
 @end
